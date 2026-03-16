@@ -928,3 +928,653 @@
     </script>
 </body>
 </html>
+// External Camera Scanner Configuration
+// GitHub Integration for Warehouse Management System
+
+class WarehouseScanner {
+    constructor() {
+        this.scanner = null;
+        this.currentStream = null;
+        this.isScanning = false;
+        this.devices = [];
+        this.currentDevice = null;
+        this.scanHistory = [];
+        this.scanCount = 0;
+        this.supportedFormats = [
+            'QR_CODE',
+            'CODE_128',
+            'CODE_39',
+            'EAN_13',
+            'EAN_8',
+            'UPC_A',
+            'UPC_E',
+            'DATA_MATRIX',
+            'PDF_417',
+            'AZTEC'
+        ];
+    }
+
+    // Initialize scanner with external camera support
+    async initializeScanner() {
+        try {
+            // Get all available cameras
+            this.devices = await this.getVideoDevices();
+            
+            // Set default to external camera (not facing user)
+            this.currentDevice = this.devices.find(device => 
+                device.label.toLowerCase().includes('back') || 
+                device.label.toLowerCase().includes('external') ||
+                device.label.toLowerCase().includes('environment')
+            ) || this.devices[0];
+
+            // Initialize ZXing scanner with all supported formats
+            this.scanner = new ZXing.BrowserMultiFormatReader();
+            
+            console.log('Scanner initialized with device:', this.currentDevice?.label);
+            console.log('Supported formats:', this.supportedFormats);
+            return { success: true, message: 'Scanner ready' };
+        } catch (error) {
+            console.error('Scanner initialization failed:', error);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // Get all available video devices
+    async getVideoDevices() {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return devices.filter(device => device.kind === 'videoinput');
+    }
+
+    // Switch between cameras
+    async switchCamera(deviceId) {
+        if (this.currentStream) {
+            this.currentStream.getTracks().forEach(track => track.stop());
+        }
+
+        try {
+            const constraints = {
+                video: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined,
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            };
+
+            this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+            this.currentDevice = this.devices.find(device => device.deviceId === deviceId);
+            
+            return { success: true, stream: this.currentStream };
+        } catch (error) {
+            console.error('Camera switch failed:', error);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // Start scanning with external camera
+    async startScanning(videoElement, onScanSuccess, onScanError) {
+        if (!this.scanner) {
+            await this.initializeScanner();
+        }
+
+        try {
+            // Get camera stream
+            const streamResult = await this.switchCamera(this.currentDevice?.deviceId);
+            if (!streamResult.success) {
+                throw new Error(streamResult.message);
+            }
+
+            // Set video stream
+            videoElement.srcObject = streamResult.stream;
+            videoElement.play();
+
+            // Start continuous scanning
+            this.isScanning = true;
+            this.continuousScan(videoElement, onScanSuccess, onScanError);
+
+            return { success: true, message: 'Scanning started' };
+        } catch (error) {
+            console.error('Start scanning failed:', error);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // Continuous scanning loop with enhanced barcode detection
+    continuousScan(videoElement, onScanSuccess, onScanError) {
+        if (!this.isScanning) return;
+
+        try {
+            // Capture frame from video
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+            context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+            // Try to decode barcode with multiple attempts
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            
+            // Try different decoding strategies
+            let code = null;
+            
+            // Strategy 1: Direct decode
+            try {
+                code = this.scanner.decodeFromImageData(imageData);
+            } catch (e) {
+                // Strategy 2: Try with enhanced contrast
+                try {
+                    const enhancedData = this.enhanceImage(imageData);
+                    code = this.scanner.decodeFromImageData(enhancedData);
+                } catch (e2) {
+                    // Strategy 3: Try with different regions
+                    code = this.tryDifferentRegions(imageData);
+                }
+            }
+
+            if (code && code.text) {
+                this.handleScanResult(code.text, onScanSuccess);
+                // Brief pause after successful scan
+                setTimeout(() => {
+                    this.continuousScan(videoElement, onScanSuccess, onScanError);
+                }, 1000);
+            } else {
+                // Continue scanning
+                requestAnimationFrame(() => {
+                    this.continuousScan(videoElement, onScanSuccess, onScanError);
+                });
+            }
+        } catch (error) {
+            // No barcode found, continue scanning
+            requestAnimationFrame(() => {
+                this.continuousScan(videoElement, onScanSuccess, onScanError);
+            });
+        }
+    }
+
+    // Enhance image for better barcode detection
+    enhanceImage(imageData) {
+        const data = imageData.data;
+        const enhancedData = new ImageData(
+            new Uint8ClampedArray(data),
+            imageData.width,
+            imageData.height
+        );
+        
+        // Increase contrast
+        const factor = 2;
+        for (let i = 0; i < data.length; i += 4) {
+            enhancedData.data[i] = Math.min(255, (data[i] - 128) * factor + 128);     // Red
+            enhancedData.data[i + 1] = Math.min(255, (data[i + 1] - 128) * factor + 128); // Green
+            enhancedData.data[i + 2] = Math.min(255, (data[i + 2] - 128) * factor + 128); // Blue
+            enhancedData.data[i + 3] = data[i + 3]; // Alpha
+        }
+        
+        return enhancedData;
+    }
+
+    // Try scanning different regions of the image
+    tryDifferentRegions(imageData) {
+        const regions = [
+            { x: 0, y: 0, w: imageData.width, h: imageData.height },           // Full image
+            { x: imageData.width * 0.25, y: 0, w: imageData.width * 0.5, h: imageData.height }, // Center
+            { x: 0, y: imageData.height * 0.25, w: imageData.width, h: imageData.height * 0.5 }, // Middle
+        ];
+        
+        for (const region of regions) {
+            try {
+                const regionData = this.extractRegion(imageData, region);
+                const code = this.scanner.decodeFromImageData(regionData);
+                if (code && code.text) {
+                    return code;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        return null;
+    }
+
+    // Extract region from image data
+    extractRegion(imageData, region) {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = region.w;
+        canvas.height = region.h;
+        
+        const tempCanvas = document.createElement('canvas');
+        const tempContext = tempCanvas.getContext('2d');
+        tempCanvas.width = imageData.width;
+        tempCanvas.height = imageData.height;
+        tempContext.putImageData(imageData, 0, 0);
+        
+        context.drawImage(tempCanvas, region.x, region.y, region.w, region.h, 0, 0, region.w, region.h);
+        return context.getImageData(0, 0, region.w, region.h);
+    }
+
+    // Handle successful scan with enhanced validation
+    handleScanResult(scanText, onScanSuccess) {
+        this.scanCount++;
+        const timestamp = new Date().toISOString();
+        
+        // Add to scan history
+        this.scanHistory.push({
+            id: this.scanCount,
+            text: scanText,
+            timestamp: timestamp,
+            device: this.currentDevice?.label || 'Unknown'
+        });
+
+        // Parse warehouse barcode format
+        const parsedData = this.parseWarehouseBarcode(scanText);
+        
+        if (parsedData.valid) {
+            onScanSuccess({
+                raw: scanText,
+                parsed: parsedData,
+                timestamp: timestamp,
+                device: this.currentDevice?.label,
+                format: this.detectBarcodeFormat(scanText)
+            });
+        } else {
+            // Try to parse as simple barcode (fallback)
+            const simpleData = this.parseSimpleBarcode(scanText);
+            onScanSuccess({
+                raw: scanText,
+                parsed: simpleData,
+                timestamp: timestamp,
+                device: this.currentDevice?.label,
+                format: this.detectBarcodeFormat(scanText)
+            });
+        }
+    }
+
+    // Detect barcode format
+    detectBarcodeFormat(text) {
+        if (text.includes('|')) {
+            return 'Warehouse Format';
+        } else if (text.match(/^\d{12,13}$/)) {
+            return 'EAN/UPC';
+        } else if (text.match(/^[A-Z0-9]{6,}$/)) {
+            return 'Code 128/39';
+        } else if (text.startsWith('http') || text.startsWith('www')) {
+            return 'QR Code URL';
+        } else {
+            return 'Unknown';
+        }
+    }
+
+    // Parse warehouse barcode format: ITEM CODE|ITEM NAME|LOCATION CODE|DIMENSION|QTY
+    parseWarehouseBarcode(barcodeText) {
+        try {
+            const parts = barcodeText.split('|');
+            
+            if (parts.length !== 5) {
+                return {
+                    valid: false,
+                    error: 'Expected format: ITEM CODE|ITEM NAME|LOCATION CODE|DIMENSION|QTY',
+                    example: 'TIMO-LG|Timo Lounger|A1-01|206 x 83 x 31 cm|1'
+                };
+            }
+
+            return {
+                valid: true,
+                data: {
+                    itemCode: parts[0].trim(),
+                    itemName: parts[1].trim(),
+                    locationCode: parts[2].trim(),
+                    dimension: parts[3].trim(),
+                    quantity: parseInt(parts[4]) || 0
+                }
+            };
+        } catch (error) {
+            return {
+                valid: false,
+                error: 'Failed to parse barcode: ' + error.message
+            };
+        }
+    }
+
+    // Parse simple barcode (fallback)
+    parseSimpleBarcode(barcodeText) {
+        return {
+            valid: true,
+            data: {
+                itemCode: barcodeText.trim(),
+                itemName: 'Unknown Item',
+                locationCode: 'Unknown',
+                dimension: 'Unknown',
+                quantity: 1
+            },
+            fallback: true
+        };
+    }
+
+    // Stop scanning
+    stopScanning() {
+        this.isScanning = false;
+        
+        if (this.currentStream) {
+            this.currentStream.getTracks().forEach(track => track.stop());
+            this.currentStream = null;
+        }
+
+        if (this.scanner) {
+            this.scanner.reset();
+        }
+
+        return { success: true, message: 'Scanning stopped' };
+    }
+
+    // Get scan history
+    getScanHistory() {
+        return this.scanHistory;
+    }
+
+    // Clear scan history
+    clearHistory() {
+        this.scanHistory = [];
+        this.scanCount = 0;
+        return { success: true, message: 'History cleared' };
+    }
+
+    // Export scan history to CSV
+    exportHistoryToCSV() {
+        if (this.scanHistory.length === 0) {
+            return { success: false, message: 'No scan history to export' };
+        }
+
+        const headers = ['ID', 'Scan Text', 'Timestamp', 'Device', 'Format'];
+        const rows = this.scanHistory.map(scan => [
+            scan.id,
+            scan.text,
+            scan.timestamp,
+            scan.device,
+            this.detectBarcodeFormat(scan.text)
+        ]);
+
+        const csvContent = [headers, ...rows]
+            .map(row => row.map(cell => `"${cell}"`).join(','))
+            .join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `scan_history_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+
+        return { success: true, message: 'History exported' };
+    }
+
+    // Get scanner statistics
+    getScannerStats() {
+        const successfulScans = this.scanHistory.length;
+        const formatStats = {};
+        
+        this.scanHistory.forEach(scan => {
+            const format = this.detectBarcodeFormat(scan.text);
+            formatStats[format] = (formatStats[format] || 0) + 1;
+        });
+
+        return {
+            totalScans: this.scanCount,
+            successfulScans: successfulScans,
+            successRate: this.scanCount > 0 ? Math.round((successfulScans / this.scanCount) * 100) : 0,
+            formatStats: formatStats,
+            currentDevice: this.currentDevice?.label || 'Unknown',
+            supportedFormats: this.supportedFormats
+        };
+    }
+}
+
+// Export for use in other modules
+window.WarehouseScanner = WarehouseScanner;
+# Warehouse Management System (WMS) - External Camera Scanner
+
+## 📋 Overview
+
+Sistem Warehouse Management System dengan scanner kamera eksternal untuk membaca QR dan barcode. Mendukung operasi gudang: Barang Masuk (IN), Barang Keluar (OUT), dan Pindah Barang (MOVE).
+
+## 🔗 Integration
+
+- **Google Spreadsheet**: [Warehouse Sheet](https://docs.google.com/spreadsheets/d/1o1I6m8d0wRTWKXAwsFI1Jn2NssRySBvKJNdjjvAXm6I/edit?gid=0#gid=0)
+- **Barcode Format**: `ITEM CODE|ITEM NAME|LOCATION CODE|DIMENSION|QTY`
+- **External Camera Support**: Kamera eksternal USB, webcam, atau kamera ponsel
+
+## 🚀 Features
+
+### 📷 Scanner Capabilities
+- ✅ **Multi-Camera Support**: Pilih antara kamera internal/eksternal
+- ✅ **QR & Barcode Reading**: Baca berbagai jenis kode
+- ✅ **Continuous Scanning**: Scan otomatis tanpa tombol
+- ✅ **Real-time Processing**: Parse data langsung saat scan
+- ✅ **Scan History**: Riwayat scan dengan export CSV
+
+### 🏭 Warehouse Operations
+- ✅ **Barang Masuk (IN)**: Scan product → Input location → Process
+- ✅ **Barang Keluar (OUT)**: Scan product → Verify location → Process  
+- ✅ **Pindah Barang (MOVE)**: Scan product → From → To → Process
+
+### 📊 Data Management
+- ✅ **Real-time Dashboard**: Update langsung setiap transaksi
+- ✅ **Spreadsheet Sync**: Otomatis sync ke Google Sheets
+- ✅ **Transaction Logging**: Log lengkap semua operasi
+- ✅ **Inventory Management**: Update stok otomatis
+
+## 📁 Files Structure
+
+```
+warehouse/
+├── code.gs                    # Google Apps Script Backend
+├── index.html                 # Main WMS Dashboard
+├── scanner-config.js          # Scanner Configuration Class
+├── scanner-app.html           # External Camera Scanner App
+├── README.md                  # Documentation
+└── scanner-deployment/        # GitHub Deployment Files
+    ├── main.js               # GitHub Actions Workflow
+    ├── package.json          # Node.js Dependencies
+    └── vercel.json           # Vercel Deployment Config
+```
+
+## 🛠️ Installation
+
+### 1. Google Apps Script Setup
+```bash
+# 1. Buka Google Apps Script: script.google.com
+# 2. Buat project baru
+# 3. Copy paste code.gs
+# 4. Deploy sebagai Web App
+# 5. Update SPREADSHEET_ID di code.gs
+```
+
+### 2. Local Development
+```bash
+# Clone repository
+git clone <repository-url>
+cd warehouse
+
+# Buka index.html di browser
+# atau gunakan live server
+python -m http.server 8000
+```
+
+### 3. External Camera Setup
+```bash
+# Connect external camera via USB
+# Allow camera permissions in browser
+# Select camera in scanner app
+```
+
+## 📱 Usage
+
+### Scanner Operation
+1. **Select Operation**: Pilih IN/OUT/MOVE
+2. **Choose Camera**: Pilih kamera eksternal
+3. **Start Scanning**: Klik "Start Scanning"
+4. **Scan Barcode**: Arahkan kamera ke barcode
+5. **Process**: Verify data dan submit
+
+### Barcode Format Example
+```
+TIMO-LG|Timo Lounger|A1-01|206 x 83 x 31 cm|1
+```
+
+### Operation Flows
+
+#### Barang Masuk (IN)
+```
+Scan Product → Auto-fill data → Verify Location → Input Qty → Submit → Update Spreadsheet
+```
+
+#### Barang Keluar (OUT)
+```
+Scan Product → Check Stock → Verify Location → Input Qty → Submit → Update Spreadsheet
+```
+
+#### Pindah Barang (MOVE)
+```
+Scan Product → From Location → Scan To Location → Input Qty → Submit → 2 Transactions
+```
+
+## 🔧 Configuration
+
+### Google Apps Script
+```javascript
+// Update di code.gs
+const SPREADSHEET_ID = "YOUR_SPREADSHEET_ID";
+const SHEET_ITEMS = "Warehouse";
+const SHEET_TRANSACTIONS = "Transactions";
+const SHEET_LOCATIONS = "CODE";
+```
+
+### Scanner Settings
+```javascript
+// Di scanner-config.js
+const scannerConfig = {
+    facingMode: 'environment',    // External camera
+    width: { ideal: 1920 },       // HD quality
+    height: { ideal: 1080 },
+    continuousScan: true,        // Auto scan
+    scanInterval: 1000           // 1 second interval
+};
+```
+
+## 🌐 Deployment Options
+
+### 1. Google Apps Script (Recommended)
+- ✅ Free hosting
+- ✅ Direct spreadsheet integration
+- ✅ Easy deployment
+
+### 2. GitHub + Vercel
+- ✅ Custom domain
+- ✅ Advanced features
+- ✅ CI/CD pipeline
+
+### 3. Local Server
+- ✅ Full control
+- ✅ Development testing
+- ✅ Custom integration
+
+## 📊 API Endpoints
+
+### Google Apps Script Functions
+```javascript
+// Scanner operations
+processInflow(barcodeData, locationCode, inputQty)
+processOutflow(barcodeData, locationCode, inputQty)  
+processMoveFlow(barcodeData, fromLocation, toLocation, inputQty)
+
+// Data operations
+getItems()
+getLocations()
+getTransactions()
+testConnection()
+```
+
+### Scanner Class Methods
+```javascript
+// Initialize
+const scanner = new WarehouseScanner();
+await scanner.initializeScanner();
+
+// Operations
+await scanner.startScanning(videoElement, onSuccess, onError);
+scanner.stopScanning();
+scanner.switchCamera(deviceId);
+
+// Data
+scanner.getScanHistory();
+scanner.exportHistoryToCSV();
+scanner.clearHistory();
+```
+
+## 🔍 Troubleshooting
+
+### Camera Issues
+```bash
+# Check camera permissions
+# Allow camera in browser settings
+# Try different camera device
+# Check USB connection
+```
+
+### Scan Issues
+```bash
+# Ensure good lighting
+# Clean camera lens
+# Hold barcode steady
+# Check barcode quality
+```
+
+### Spreadsheet Issues
+```bash
+# Verify SPREADSHEET_ID
+# Check sheet permissions
+# Validate sheet structure
+# Test connection function
+```
+
+## 📞 Support
+
+### Common Issues
+1. **Camera not found**: Check permissions and connection
+2. **Barcode not reading**: Improve lighting and focus
+3. **Spreadsheet error**: Verify ID and permissions
+4. **Data not updating**: Check network connection
+
+### Help Resources
+- 📖 [Google Apps Script Documentation](https://developers.google.com/apps-script)
+- 📖 [ZXing Barcode Library](https://github.com/zxing-js/library)
+- 📖 [Bootstrap Documentation](https://getbootstrap.com/docs/)
+- 📖 [WebRTC Camera API](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices)
+
+## 🔄 Version History
+
+### v2.0 - External Camera Scanner
+- ✅ External camera support
+- ✅ Continuous scanning
+- ✅ GitHub deployment
+- ✅ Advanced features
+
+### v1.0 - Basic WMS
+- ✅ Basic barcode scanning
+- ✅ Spreadsheet integration
+- ✅ Dashboard interface
+
+## 📄 License
+
+MIT License - Free for commercial and personal use
+
+## 🤝 Contributing
+
+1. Fork repository
+2. Create feature branch
+3. Submit pull request
+4. Review and merge
+
+---
+
+**Ready to deploy your warehouse scanner system! 🚀**
