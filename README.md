@@ -123,6 +123,9 @@
                     <a href="https://ieindospacegroup-cmyk.github.io/warehouse-scanner/" class="btn btn-outline-primary">
                         <i class="bi bi-house"></i> Main Dashboard
                     </a>
+                    <a href="https://ieindospacegroup-cmyk.github.io/warehouse-scanner/scanner-app.html" class="btn btn-success">
+                        <i class="bi bi-camera-video"></i> Scanner App
+                    </a>
                 </div>
                 <div>
                     <h1 class="display-4 text-primary mb-0">
@@ -302,6 +305,9 @@
                     <div class="mb-2">
                         <a href="https://ieindospacegroup-cmyk.github.io/warehouse-scanner/" class="text-white me-3">
                             <i class="bi bi-house"></i> Main Dashboard
+                        </a>
+                        <a href="https://ieindospacegroup-cmyk.github.io/warehouse-scanner/scanner-app.html" class="text-white me-3">
+                            <i class="bi bi-camera-video"></i> Scanner App
                         </a>
                         <a href="https://docs.google.com/spreadsheets/d/1o1I6m8d0wRTWKXAwsFI1Jn2NssRySBvKJNdjjvAXm6I/edit" class="text-white" target="_blank">
                             <i class="bi bi-google"></i> Spreadsheet
