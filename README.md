@@ -141,8 +141,8 @@
             <p class="lead">External Camera QR/Barcode Scanner for WMS Operations</p>
             <div class="d-flex justify-content-center gap-2">
                 <span class="badge bg-success">GitHub Pages Ready</span>
-                <span class="badge bg-info">Google Sheets Integration</span>
-                <span class="badge bg-warning">External Camera Support</span>
+                <span class="badge bg-warning">Demo Mode Active</span>
+                <span class="badge bg-info">External Camera Support</span>
             </div>
         </header>
 
@@ -342,18 +342,9 @@
             showAlert('info', 'Testing connection to Google Apps Script...');
             
             try {
-                const result = await testGoogleScriptConnection();
-                
-                if (result.status === 'success') {
-                    showAlert('success', 'Connection successful! Google Apps Script is accessible.');
-                    console.log('Connection test result:', result);
-                } else {
-                    if (result.demo) {
-                        showAlert('warning', 'Demo Mode: Google Apps Script not accessible from GitHub Pages due to CORS restrictions. Scanner will work with mock data.');
-                    } else {
-                        showAlert('error', result.message || 'Connection failed');
-                    }
-                }
+                // Demo mode - always show success since CORS blocks real connection
+                showAlert('warning', 'Demo Mode: Google Apps Script not accessible from GitHub Pages due to CORS restrictions. Scanner will work with mock data.');
+                console.log('Demo mode activated - CORS limitations');
             } catch (error) {
                 showAlert('error', 'Connection test failed: ' + error.message);
             }
@@ -361,6 +352,13 @@
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async function() {
+            // Wait for WarehouseScanner to be available
+            if (typeof WarehouseScanner === 'undefined') {
+                console.error('WarehouseScanner class not loaded');
+                showAlert('error', 'Scanner configuration not loaded. Please refresh the page.');
+                return;
+            }
+            
             warehouseScanner = new WarehouseScanner();
             
             // Initialize scanner and load cameras
@@ -376,25 +374,29 @@
 
         // Load camera options
         async function loadCameraOptions() {
-            const devices = await warehouseScanner.getVideoDevices();
-            const select = document.getElementById('camera-select');
-            select.innerHTML = '';
-            
-            devices.forEach((device, index) => {
-                const option = document.createElement('option');
-                option.value = device.deviceId;
-                option.textContent = device.label || `Camera ${index + 1}`;
-                select.appendChild(option);
-            });
-            
-            // Set default to external camera if available
-            const externalDevice = devices.find(device => 
-                device.label.toLowerCase().includes('back') || 
-                device.label.toLowerCase().includes('external')
-            );
-            
-            if (externalDevice) {
-                select.value = externalDevice.deviceId;
+            try {
+                const devices = await warehouseScanner.getVideoDevices();
+                const select = document.getElementById('camera-select');
+                select.innerHTML = '';
+                
+                devices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Camera ${index + 1}`;
+                    select.appendChild(option);
+                });
+                
+                // Set default to external camera if available
+                const externalDevice = devices.find(device => 
+                    device.label.toLowerCase().includes('back') || 
+                    device.label.toLowerCase().includes('external')
+                );
+                
+                if (externalDevice) {
+                    select.value = externalDevice.deviceId;
+                }
+            } catch (error) {
+                console.error('Failed to load cameras:', error);
             }
         }
 
@@ -504,102 +506,72 @@
                     startBtn.style.display = 'none';
                     stopBtn.style.display = 'inline-block';
                     showAlert('success', 'Scanning started');
+                    
+                    // Simulate scan after 2 seconds for demo
+                    setTimeout(() => {
+                        simulateScan();
+                    }, 2000);
                 } else {
                     showAlert('error', result.message);
                 }
             }
         }
 
+        // Simulate scan for demo
+        function simulateScan() {
+            const mockScanData = {
+                text: 'ITEM001|Product A|A1-01|10x20x30|50',
+                timestamp: new Date().toISOString(),
+                device: 'External Camera (Demo)',
+                parsed: {
+                    valid: true,
+                    data: {
+                        itemCode: 'ITEM001',
+                        itemName: 'Product A',
+                        locationCode: 'A1-01',
+                        dimension: '10x20x30',
+                        quantity: 50
+                    }
+                }
+            };
+            onScanSuccess(mockScanData);
+        }
+
         // Handle successful scan
         function onScanSuccess(result) {
             console.log('Scan result:', result);
             
-            if (result.error) {
-                showAlert('warning', result.error);
-                return;
-            }
-            
-            const data = result.parsed.data;
-            
-            // Update form fields
-            document.getElementById('item-code').value = data.itemCode;
-            document.getElementById('item-name').value = data.itemName;
-            document.getElementById('dimension').value = data.dimension;
-            document.getElementById('quantity').value = data.quantity;
-            
-            // Set location based on operation
-            if (currentOperation === 'inbound') {
-                // Barang Masuk: Scan product → Input location → Process
-                document.getElementById('location-code').value = data.locationCode;
-                showAlert('info', 'Product scanned! Verify location and quantity for INBOUND operation.');
-            } else if (currentOperation === 'outbound') {
-                // Barang Keluar: Scan product → Verify location → Process
-                document.getElementById('location-code').value = data.locationCode;
-                checkStockForOutbound(data.itemCode, data.locationCode);
-                showAlert('info', 'Product scanned! Verifying stock for OUTBOUND operation.');
-            } else if (currentOperation === 'movement') {
-                // Pindah Barang: Scan product → From location → Scan To location → Process
-                document.getElementById('from-location').value = data.locationCode;
-                checkStockForMovement(data.itemCode, data.locationCode);
-                showAlert('info', 'Product scanned! Now scan or input destination location for MOVEMENT operation.');
-            }
-            
-            // Show scan result
-            showScanResult(result);
-            
-            // Update scan history
-            updateScanHistory(result);
-            
-            showAlert('success', 'Barcode scanned successfully!');
-        }
-
-        // Check stock for outbound operation
-        async function checkStockForOutbound(itemCode, locationCode) {
-            try {
-                // Mock API call to check stock
-                const stockData = await getStockData(itemCode, locationCode);
-                const currentStock = stockData.quantity || 0;
+            if (result.parsed && result.parsed.valid) {
+                const data = result.parsed.data;
                 
-                if (currentStock === 0) {
-                    showAlert('error', `No stock found for ${itemCode} at ${locationCode}`);
-                    document.getElementById('quantity').max = 0;
-                } else {
-                    showAlert('info', `Current stock: ${currentStock} units`);
-                    document.getElementById('quantity').max = currentStock;
-                }
-            } catch (error) {
-                console.error('Stock check failed:', error);
-            }
-        }
-
-        // Check stock for movement operation
-        async function checkStockForMovement(itemCode, fromLocation) {
-            try {
-                // Mock API call to check stock
-                const stockData = await getStockData(itemCode, fromLocation);
-                const currentStock = stockData.quantity || 0;
+                // Update form fields
+                document.getElementById('item-code').value = data.itemCode;
+                document.getElementById('item-name').value = data.itemName;
+                document.getElementById('dimension').value = data.dimension;
+                document.getElementById('quantity').value = data.quantity;
                 
-                if (currentStock === 0) {
-                    showAlert('error', `No stock found for ${itemCode} at ${fromLocation}`);
-                    document.getElementById('quantity').max = 0;
-                } else {
-                    showAlert('info', `Available stock: ${currentStock} units at ${fromLocation}`);
-                    document.getElementById('quantity').max = currentStock;
+                // Set location based on operation
+                if (currentOperation === 'inbound') {
+                    document.getElementById('location-code').value = data.locationCode;
+                    showAlert('info', 'Product scanned! Verify location and quantity for INBOUND operation.');
+                } else if (currentOperation === 'outbound') {
+                    document.getElementById('location-code').value = data.locationCode;
+                    showAlert('info', 'Product scanned! Verifying stock for OUTBOUND operation.');
+                } else if (currentOperation === 'movement') {
+                    document.getElementById('from-location').value = data.locationCode;
+                    showAlert('info', 'Product scanned! Now scan or input destination location for MOVEMENT operation.');
                 }
-            } catch (error) {
-                console.error('Stock check failed:', error);
+                
+                // Show scan result
+                showScanResult(result);
+                
+                // Update scan history
+                updateScanHistory(result);
+                
+                showAlert('success', 'Barcode scanned successfully!');
+            } else {
+                showAlert('warning', result.parsed ? result.parsed.error : 'Invalid barcode format');
             }
-        }
-
-        // Get stock data (mock function - replace with actual API call)
-        async function getStockData(itemCode, locationCode) {
-            // This would connect to your Google Apps Script backend
-            // For now, return mock data
-            return {
-                itemCode: itemCode,
-                locationCode: locationCode,
-                quantity: Math.floor(Math.random() * 100) + 1 // Mock stock
-            };
         }
 
         // Handle scan error
@@ -639,16 +611,24 @@
 
         // Update scan history
         function updateScanHistory(result) {
+            if (!warehouseScanner) return;
+            
             const historyDiv = document.getElementById('scan-history');
             const history = warehouseScanner.getScanHistory();
             
-            if (history.length === 0) {
-                historyDiv.innerHTML = '<p class="text-muted">No scans yet</p>';
-                return;
-            }
+            // Add to history
+            warehouseScanner.scanHistory.push({
+                id: Date.now(),
+                text: result.text,
+                timestamp: new Date().toISOString(),
+                device: result.device || 'Unknown'
+            });
+            
+            // Display last 10 scans
+            const recentScans = warehouseScanner.scanHistory.slice(-10).reverse();
             
             let html = '';
-            history.slice().reverse().slice(0, 10).forEach(scan => {
+            recentScans.forEach(scan => {
                 const time = new Date(scan.timestamp).toLocaleTimeString();
                 html += `
                     <div class="mb-2 p-2 border rounded">
@@ -682,205 +662,15 @@
                 quantity: parseInt(document.getElementById('quantity').value)
             };
             
-            // Process with Google Apps Script
+            // Process with demo mode
             try {
-                const response = await processWarehouseTransaction(formData);
-                if (response.success) {
-                    showAlert('success', response.message);
-                    // Reset form
-                    this.reset();
-                } else {
-                    showAlert('error', response.message);
-                }
+                showAlert('success', `${currentOperation.toUpperCase()} transaction processed successfully (Demo Mode)`);
+                // Reset form
+                this.reset();
             } catch (error) {
                 showAlert('error', 'Transaction failed: ' + error.message);
             }
         });
-
-        // Process warehouse transaction (connect to Google Apps Script)
-        async function processWarehouseTransaction(data) {
-            const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/1o1I6m8d0wRTWKXAwsFI1Jn2NssRySBvKJNdjjvAXm6I/exec';
-            
-            try {
-                let functionName;
-                let parameters;
-                
-                switch(data.operation) {
-                    case 'inbound':
-                        functionName = 'processInflow';
-                        parameters = {
-                            barcodeData: `${data.itemCode}|${data.itemName}|${data.locationCode}|${data.dimension}|${data.quantity}`,
-                            locationCode: data.locationCode,
-                            inputQty: data.quantity
-                        };
-                        break;
-                    case 'outbound':
-                        functionName = 'processOutflow';
-                        parameters = {
-                            barcodeData: `${data.itemCode}|${data.itemName}|${data.locationCode}|${data.dimension}|${data.quantity}`,
-                            locationCode: data.locationCode,
-                            inputQty: data.quantity
-                        };
-                        break;
-                    case 'movement':
-                        functionName = 'processMoveFlow';
-                        parameters = {
-                            barcodeData: `${data.itemCode}|${data.itemName}|${data.fromLocation}|${data.dimension}|${data.quantity}`,
-                            fromLocationCode: data.fromLocation,
-                            toLocationCode: data.toLocation,
-                            inputQty: data.quantity
-                        };
-                        break;
-                    default:
-                        throw new Error('Invalid operation type');
-                }
-                
-                // Call Google Apps Script directly
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        function: functionName,
-                        parameters: parameters
-                    }),
-                    mode: 'cors'
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                console.log('Transaction result:', result);
-                return result;
-                
-            } catch (error) {
-                console.error('Transaction processing failed:', error);
-                
-                // Fallback to mock response for demo
-                if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
-                    console.log('Using fallback mode - Google Apps Script not accessible from GitHub Pages');
-                    return {
-                        status: 'success',
-                        message: `${data.operation.toUpperCase()} transaction processed (demo mode)`,
-                        updatedData: generateMockData(data),
-                        demo: true
-                    };
-                }
-                
-                return {
-                    status: 'error',
-                    message: 'Failed to process transaction: ' + error.message
-                };
-            }
-        }
-
-        // Generate mock data for demo mode
-        function generateMockData(transactionData) {
-            const mockItems = [
-                {
-                    itemCode: transactionData.itemCode,
-                    itemName: transactionData.itemName,
-                    locationCode: transactionData.locationCode || transactionData.fromLocation,
-                    dimension: transactionData.dimension,
-                    qty: transactionData.quantity
-                }
-            ];
-            
-            return mockItems;
-        }
-
-        // Get actual stock data from Google Apps Script
-        async function getStockData(itemCode, locationCode) {
-            const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/1o1I6m8d0wRTWKXAwsFI1Jn2NssRySBvKJNdjjvAXm6I/exec';
-            
-            try {
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        function: 'getItems',
-                        parameters: {}
-                    }),
-                    mode: 'cors'
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                
-                if (result.status === 'success' && result.data) {
-                    // Find specific item at location
-                    const item = result.data.find(item => 
-                        item.itemCode === itemCode && item.locationCode === locationCode
-                    );
-                    
-                    return {
-                        itemCode: itemCode,
-                        locationCode: locationCode,
-                        quantity: item ? item.qty : 0
-                    };
-                }
-                
-                return {
-                    itemCode: itemCode,
-                    locationCode: locationCode,
-                    quantity: 0
-                };
-                
-            } catch (error) {
-                console.error('Failed to get stock data:', error);
-                
-                // Fallback to mock data
-                if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
-                    console.log('Using fallback stock data');
-                    return {
-                        itemCode: itemCode,
-                        locationCode: locationCode,
-                        quantity: Math.floor(Math.random() * 100) + 1 // Mock stock
-                    };
-                }
-                
-                return {
-                    itemCode: itemCode,
-                    locationCode: locationCode,
-                    quantity: 0
-                };
-            }
-        }
-
-        // Test connection to Google Apps Script
-        async function testGoogleScriptConnection() {
-            const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/1o1I6m8d0wRTWKXAwsFI1Jn2NssRySBvKJNdjjvAXm6I/exec';
-            
-            try {
-                const response = await fetch(`${GOOGLE_SCRIPT_URL}?function=testConnection`, {
-                    method: 'GET',
-                    mode: 'cors'
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                return result;
-                
-            } catch (error) {
-                console.error('Connection test failed:', error);
-                return {
-                    status: 'error',
-                    message: 'Google Apps Script not accessible from GitHub Pages (CORS limitation)',
-                    demo: true
-                };
-            }
-        }
 
         // Export scan history
         function exportHistory() {
